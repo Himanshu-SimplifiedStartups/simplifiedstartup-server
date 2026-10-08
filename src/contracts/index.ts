@@ -71,6 +71,13 @@ export const resetPasswordSchema = z.object({
   password: z.string().min(8).max(100),
 });
 
+/** POST /api/v1/auth/change-password — a signed-in user changing their own password. */
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: z.string().min(8).max(100),
+});
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+
 export const userPatchSchema = z
   .object({
     role: z.enum(ROLES).optional(),

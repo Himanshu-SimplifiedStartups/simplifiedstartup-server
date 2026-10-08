@@ -1,10 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
-import { acceptInviteSchema, forgotPasswordSchema, loginSchema, resetPasswordSchema } from "../../contracts";
+import { acceptInviteSchema, changePasswordSchema, forgotPasswordSchema, loginSchema, resetPasswordSchema } from "../../contracts";
 import { db } from "../../lib/db";
 import { env } from "../../lib/env";
 import { getMailer, templates } from "../../lib/mail";
-import { RESET_TTL_MS, createSession, destroySession, hashToken, newToken, requireAuth } from "../../lib/auth";
+import { RESET_TTL_MS, SESSION_COOKIE, createSession, destroySession, hashToken, newToken, requireAuth } from "../../lib/auth";
 
 export async function authRoutes(app: FastifyInstance) {
   const tightLimit = { rateLimit: { max: 5, timeWindow: "1 minute" } };
@@ -81,6 +81,27 @@ export async function authRoutes(app: FastifyInstance) {
     });
     // A reset invalidates every existing session for the account.
     await db.session.deleteMany({ where: { userId: user.id } });
+    return { ok: true };
+  });
+
+  app.post("/change-password", { config: tightLimit, preHandler: [requireAuth] }, async (request, reply) => {
+    const { currentPassword, newPassword } = changePasswordSchema.parse(request.body);
+    const user = await db.user.findUnique({ where: { id: request.user!.id } });
+    const ok = user && user.passwordHash && (await bcrypt.compare(currentPassword, user.passwordHash));
+    if (!ok) return reply.code(400).send({ ok: false, error: "current password is incorrect" });
+    if (currentPassword === newPassword) {
+      return reply.code(400).send({ ok: false, error: "new password must differ from the current one" });
+    }
+
+    await db.user.update({
+      where: { id: user.id },
+      data: { passwordHash: await bcrypt.hash(newPassword, 12), resetTokenHash: null, resetExpiresAt: null },
+    });
+    // Sign out every other device; the session making this request stays valid.
+    const current = request.cookies[SESSION_COOKIE];
+    await db.session.deleteMany({
+      where: { userId: user.id, ...(current ? { NOT: { tokenHash: hashToken(current) } } : {}) },
+    });
     return { ok: true };
   });
 }
